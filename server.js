@@ -40,7 +40,6 @@ app.post("/api/validate-vat", async (req, res) => {
   }
 });
 
-
 // === Shopify-Kunden-Registrierung ===
 
 // Mapping von Ländernamen auf Shopify-konforme ISO-2 Codes
@@ -54,7 +53,7 @@ const countryMap = {
 
 // Funktion zum Überprüfen, ob die E-Mail bereits existiert
 async function findCustomerByEmail(email) {
-  const response = await fetch(`https://${SHOP_NAME}/admin/api/2023-10/customers/search.json?query=email:${email}`, {
+  const response = await fetch(`https://${SHOP_NAME}/admin/api/2023-10/customers/search.json?query=email:${encodeURIComponent(email)}`, {
     method: "GET",
     headers: {
       "Content-Type": "application/json",
@@ -65,6 +64,23 @@ async function findCustomerByEmail(email) {
   const data = await response.json();
   return data.customers.length > 0 ? data.customers[0] : null;
 }
+
+// ✅ NEU: E-Mail-Check-Route für Frontend
+app.post("/check-email", async (req, res) => {
+  const { email } = req.body;
+
+  if (!email || typeof email !== "string") {
+    return res.status(400).json({ error: "Ungültige E-Mail" });
+  }
+
+  try {
+    const existingCustomer = await findCustomerByEmail(email);
+    res.json({ exists: !!existingCustomer });
+  } catch (error) {
+    console.error("❌ Fehler bei E-Mail-Prüfung:", error);
+    res.status(500).json({ error: "Fehler beim E-Mail-Abgleich" });
+  }
+});
 
 // Shopify-Kundenregistrierung
 app.post("/register", async (req, res) => {
