@@ -1,0 +1,19 @@
+{
+  "name": "shopify-customer-api",
+  "version": "1.0.0",
+  "description": "Ein Node.js-Server für Shopify-Kundenregistrierung über die Admin API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "cors": "^2.8.5",
+    "body-parser": "^1.19.0",
+    "node-fetch": "^2.6.1"
+  },
+  "engines": {
+    "node": "14.x"
+  },
+  "license": "MIT"
+}
