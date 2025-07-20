@@ -8,8 +8,8 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-const SHOPIFY_ACCESS_TOKEN = "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"; // Admin API Token
-const SHOP_NAME = "jqm9is-ak.myshopify.com"; // Shopify-Shop-Domain
+const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+const SHOP_NAME = process.env.SHOP_NAME;
 
 // === VIES VAT-ID-Validierung ===
 app.post("/api/validate-vat", async (req, res) => {
