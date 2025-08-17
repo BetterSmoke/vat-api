@@ -9,34 +9,110 @@ app.use(cors());
 app.use(bodyParser.json());
 
 const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
-const SHOP_NAME = process.env.SHOP_NAME; // Muss z. B. "better-smoke.myshopify.com" sein
+const SHOP_NAME = process.env.SHOP_NAME; // Muss z. B. "better-smoke.myshopify.com" sein
 
-// === VIES VAT-ID-Validierung ===
+// === NEU: vatlayer API Key (ENV überschreibt, sonst fester Key aus deiner Nachricht) ===
+const VATLAYER_API_KEY = process.env.VATLAYER_API_KEY || "757c265e2bbbfc00956f5d9366536a8e";
+
+// === VIES VAT-ID-Validierung (mit Fallback auf vatlayer) ===
 app.post("/api/validate-vat", async (req, res) => {
   const vatNumber = req.body.vat_number;
-
   if (!vatNumber || vatNumber.length < 3) {
     return res.status(400).json({ error: "Ungültige VAT-Nummer" });
   }
 
   const countryCode = vatNumber.slice(0, 2);
   const vat = vatNumber.slice(2);
-
   const wsdlUrl = "https://ec.europa.eu/taxation_customs/vies/checkVatService.wsdl";
 
-  try {
-    const client = await soap.createClientAsync(wsdlUrl);
-    const [result] = await client.checkVatAsync({ countryCode, vatNumber: vat });
+  const isServiceUnavailable = (err) => {
+    const s = String(
+      err?.root?.Envelope?.Body?.Fault?.faultstring ||
+      err?.response?.data ||
+      err?.body ||
+      err?.message ||
+      ""
+    );
+    return /MS_UNAVAILABLE|SERVICE_UNAVAILABLE/i.test(s);
+  };
 
-    console.log("✅ VIES Antwort:", result);
-    res.json({
-      valid: result.valid,
+  async function viesCheck() {
+    // https-Endpoint erzwingen (falls WSDL http liefert)
+    const client = await soap.createClientAsync(wsdlUrl, {
+      endpoint: "https://ec.europa.eu/taxation_customs/vies/services/checkVatService",
+    });
+    const [result] = await client.checkVatAsync({ countryCode, vatNumber: vat });
+    return {
+      valid: !!result.valid,
       name: result.name || null,
       address: result.address || null,
-    });
-  } catch (err) {
-    console.error("❌ Fehler bei VIES-Abfrage:", err);
-    res.status(500).json({ error: "Fehler bei der VAT-Prüfung über VIES" });
+    };
+  }
+
+  async function vatlayerCheck() {
+    // 1) Neuer apilayer-Endpoint (Header: apikey)
+    try {
+      const url1 = `https://api.apilayer.com/vat/validate?number=${encodeURIComponent(vatNumber)}`;
+      const r1 = await fetch(url1, { headers: { apikey: VATLAYER_API_KEY } });
+      if (r1.ok) {
+        const d = await r1.json();
+        const valid =
+          d.valid === true ||
+          d.validation_status === "valid" ||
+          d.format_valid === true;
+        return {
+          valid: !!valid,
+          name: d.company_name || null,
+          address: d.company_address || null,
+        };
+      }
+    } catch (_) { /* ignore */ }
+
+    // 2) Älterer Endpoint (falls der neue nicht verfügbar ist)
+    try {
+      const url2 = `http://apilayer.net/api/validate?access_key=${encodeURIComponent(
+        VATLAYER_API_KEY
+      )}&vat_number=${encodeURIComponent(vatNumber)}`;
+      const r2 = await fetch(url2);
+      if (r2.ok) {
+        const d = await r2.json();
+        const valid =
+          d.valid === true ||
+          d.validation_status === "valid" ||
+          d.format_valid === true;
+        return {
+          valid: !!valid,
+          name: d.company_name || null,
+          address: d.company_address || null,
+        };
+      }
+    } catch (_) { /* ignore */ }
+
+    throw new Error("vatlayer_unavailable");
+  }
+
+  try {
+    // 1) VIES aufrufen; bei MS_UNAVAILABLE einmal kurz retryen
+    try {
+      return res.json(await viesCheck());
+    } catch (err) {
+      if (isServiceUnavailable(err)) {
+        await new Promise((r) => setTimeout(r, 400)); // kurzer Backoff
+        try {
+          return res.json(await viesCheck());
+        } catch (err2) {
+          if (!isServiceUnavailable(err2)) throw err2; // anderer Fehler -> unten behandeln
+        }
+      }
+      // 2) Fallback: vatlayer
+      const fallback = await vatlayerCheck();
+      return res.json(fallback);
+    }
+  } catch (finalErr) {
+    console.error("❌ VAT-Prüfung fehlgeschlagen:", finalErr);
+    return res
+      .status(503)
+      .json({ error: "Die USt-IdNr. kann derzeit nicht verifiziert werden." });
   }
 });
 
